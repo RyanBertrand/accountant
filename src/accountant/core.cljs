@@ -62,45 +62,54 @@
 
 (defn- prevent-reload-on-known-path
   "Create a click handler that blocks page reloads for known routes"
-  [history path-exists? reload-same-path?]
+  [history path-exists? reload-same-path? nav-confirm-handler]
   (events/listen
-   js/document
-   "click"
-   (fn [e]
-     (let [target (.-target e)
-           button (.-button e)
-           meta-key (.-metaKey e)
-           alt-key (.-altKey e)
-           ctrl-key (.-ctrlKey e)
-           shift-key (.-shiftKey e)
-           any-key (or meta-key alt-key ctrl-key shift-key)
-           href-node (find-href-node target)
-           href (when href-node (.-href href-node))
-           link-target (when href-node (.-target href-node))
-           uri (.parse Uri href)
-           path (.getPath uri)
-           query (uri->query uri)
-           fragment (uri->fragment uri)
-           relative-href (str path query fragment)
-           title (.-title target)
-           host (.getDomain uri)
-           port (.getPort uri)
-           current-host js/window.location.hostname
-           current-port js/window.location.port
-           loc js/window.location
-           current-relative-href (str (.-pathname loc) (.-query loc) (.-hash loc))]
-       (when (and (not any-key)
-                  (#{"" "_self"} link-target)
-                  (= button 0)
-                  (= host current-host)
-                  (or (not port)
-                      (= (str port) (str current-port)))
-                  (path-exists? path))
-         (when (not= current-relative-href relative-href) ;; do not add duplicate html5 history state
-           (. history (setToken relative-href title)))
-         (.preventDefault e)
-         (when reload-same-path?
-           (events/dispatchEvent history (Event. path true))))))))
+    js/document
+    "click"
+    (fn [e]
+      (let [target (.-target e)
+            button (.-button e)
+            meta-key (.-metaKey e)
+            alt-key (.-altKey e)
+            ctrl-key (.-ctrlKey e)
+            shift-key (.-shiftKey e)
+            any-key (or meta-key alt-key ctrl-key shift-key)
+            href-node (find-href-node target)
+            href (when href-node (.-href href-node))
+            link-target (when href-node (.-target href-node))
+            uri (.parse Uri href)
+            path (.getPath uri)
+            query (uri->query uri)
+            fragment (uri->fragment uri)
+            relative-href (str path query fragment)
+            title (.-title target)
+            host (.getDomain uri)
+            port (.getPort uri)
+            current-host js/window.location.hostname
+            current-port js/window.location.port
+            loc js/window.location
+            current-relative-href (str (.-pathname loc) (.-query loc) (.-hash loc))]
+        (when (and (not any-key)
+                   (#{"" "_self"} link-target)
+                   (= button 0)
+                   (= host current-host)
+                   (or (not port)
+                       (= (str port) (str current-port)))
+                   (path-exists? path))
+          (let [confirm-message (when (fn? nav-confirm-handler)
+                                  (nav-confirm-handler path))
+                can-navigate? (if confirm-message
+                                ;Returns a truthy value based on user input
+                                (js/confirm confirm-message)
+                                ;No confirm message, so assume we can navigate freely
+                                true)]
+            (when (and can-navigate?
+                       (not= current-relative-href relative-href)) ;; do not add duplicate html5 history state
+              (. history (setToken relative-href title)))
+            (.preventDefault e)
+            (when (and can-navigate?
+                       reload-same-path?)
+              (events/dispatchEvent history (Event. path true)))))))))
 
 (defonce nav-handler nil)
 (defonce path-exists? nil)
@@ -115,14 +124,14 @@
   new page here.
 
   path-exists?: a fn of one argument, a path. Return truthy if this path is handled by the SPA"
-  [{:keys [nav-handler path-exists? reload-same-path?]}]
+  [{:keys [nav-handler path-exists? reload-same-path? nav-confirm-handler]}]
   (.setUseFragment history false)
   (.setPathPrefix history "")
   (.setEnabled history true)
   (set! accountant.core/nav-handler nav-handler)
   (set! accountant.core/path-exists? path-exists?)
   (set! document-click-handler-listener-key (dispatch-on-navigate history nav-handler))
-  (set! navigate-listener-key (prevent-reload-on-known-path history path-exists? reload-same-path?)))
+  (set! navigate-listener-key (prevent-reload-on-known-path history path-exists? reload-same-path? nav-confirm-handler)))
 
 (defn unconfigure-navigation!
   "Teardown HTML5 history navigation.
